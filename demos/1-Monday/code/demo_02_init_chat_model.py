@@ -34,13 +34,13 @@ print("=" * 70)
 print("PART 1: Basic Model Initialization with init_chat_model()")
 print("=" * 70)
 
-from langchain import init_chat_model
+from langchain.chat_models import init_chat_model
 
 # v1.0 Standard: Use init_chat_model() with provider string
 print("\n[Step 1] Initializing model with provider string...")
 
 # The provider string format: "provider:model-name"
-model = init_chat_model("openai:gpt-4o-mini")
+model = init_chat_model("bedrock:us.amazon.nova-2-lite-v1:0")
 
 print("Model initialized successfully!")
 print(f"  Type: {type(model).__name__}")
@@ -69,8 +69,8 @@ Examples:
   Anthropic:  "anthropic:claude-3-5-sonnet-20241022"
               "anthropic:claude-3-haiku-20240307"
   
-  Bedrock:    "bedrock:anthropic.claude-3-sonnet-20240229-v1:0"
-              "bedrock:amazon.titan-text-express-v1"
+  Bedrock:    "bedrock:us.amazon.nova-2-lite-v1:0"
+              "bedrock:us.amazon.nova-lite-v1:0"
   
   Google:     "google_genai:gemini-1.5-flash"
               "google_genai:gemini-1.5-pro"
@@ -80,7 +80,7 @@ Examples:
 print("[Step 3] Demonstrating provider switching...")
 
 providers_to_try = [
-    ("openai:gpt-4o-mini", "OpenAI GPT-4o Mini"),
+    ("openai:gpt-4o-mini", "openai:gpt-3.5-turbo"),
     # Uncomment if you have Anthropic credentials:
     # ("anthropic:claude-3-haiku-20240307", "Anthropic Claude 3 Haiku"),
 ]

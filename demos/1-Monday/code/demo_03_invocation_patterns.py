@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-from langchain import init_chat_model
+from langchain.chat_models import init_chat_model
 
 # Initialize model for all demos
 model = init_chat_model("openai:gpt-4o-mini")
@@ -68,7 +68,10 @@ print("\n[Step 2] Invoke with message format...")
 
 messages = [
     {"role": "system", "content": "You are a helpful geography assistant."},
-    {"role": "user", "content": "What is the capital of Japan?"}
+    {"role": "user", "content": "What is the capital of Japan?"},
+    {"role": "assistant", "content": "The capital is Tokyo"},
+    {"role": "user", "content": "What can I do there?"},
+
 ]
 
 response = model.invoke(messages)

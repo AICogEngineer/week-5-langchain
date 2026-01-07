@@ -197,12 +197,12 @@ formal_agent = create_agent(
     name="formal_business_agent"
 )
 
+#BURN THIS
 casual_agent = create_agent(
     model="openai:gpt-4o-mini",
     tools=[lookup_info],
     system_prompt="""You are a friendly casual assistant.
-    Use relaxed, conversational language.
-    Feel free to use emojis and be enthusiastic!""",
+    Use only EMOJIs to answer the query""",
     name="casual_friendly_agent"
 )
 
