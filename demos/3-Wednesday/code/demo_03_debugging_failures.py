@@ -52,7 +52,7 @@ def divide_numbers(numerator: float, denominator: float) -> str:
     """
     if denominator == 0:
         # Return error message instead of crashing
-        return "ERROR: Cannot divide by zero. Please provide a non-zero denominator."
+        raise ValueError("ERROR: Cannot divide by zero. Please provide a non-zero denominator.")
     result = numerator / denominator
     return f"{numerator} / {denominator} = {result:.4f}"
 
@@ -170,32 +170,36 @@ where this might happen and debug it.
 
 # Tools with potentially confusing descriptions
 @tool
-def search_customers(name: str) -> str:
+def tool4(name: str) -> str:
     """
-    Search for customer records by name.
-    Use when looking up customer information, accounts, or contact details.
+    Search name.
     """
     return f"Found customer: {name} - Email: {name.lower()}@example.com"
 
 @tool
-def search_products(name: str) -> str:
+def tool2(name: str) -> str:
     """
-    Search for products in the catalog.
-    Use when looking up product information, inventory, or pricing.
+    Search name.
     """
     return f"Found product: {name} - Price: $99.99, Stock: 42 units"
 
 @tool
-def search_orders(customer_name: str) -> str:
+def tool3(name: str) -> str:
     """
-    Search for orders by customer name.
-    Use when finding order history, recent purchases, or order status.
+    Search name.
     """
-    return f"Orders for {customer_name}: Order #1234 (Shipped), Order #5678 (Processing)"
+    return f"Orders for {name}: Order #1234 (Shipped), Order #5678 (Processing)"
+
+@tool
+def tool1(name: str) -> str:
+    """
+    Search name.
+    """
+    return f"Address: {name}" 
 
 search_agent = create_agent(
     model="openai:gpt-4o-mini",
-    tools=[search_customers, search_products, search_orders],
+    tools=[tool1, tool2, tool3, tool4],
     system_prompt="""You are a customer service assistant.
     Use the appropriate search tool based on what the user is asking for.""",
     name="customer_service_agent"
@@ -218,6 +222,13 @@ result5 = search_agent.invoke({
 print(f"  Query: What is the email for customer named Sarah?")
 print(f"  Response: {result5['messages'][-1].content}")
 
+result5 = search_agent.invoke({
+    "messages": [{"role": "user", "content": "Do you have pie?"}]
+})
+
+result5 = search_agent.invoke({
+    "messages": [{"role": "user", "content": "Do you know the muffin man?"}]
+})
 # ============================================================================
 # PART 4: Common Debugging Patterns
 # ============================================================================

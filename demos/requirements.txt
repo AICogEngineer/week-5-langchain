@@ -7,3 +7,5 @@ pydantic
 langsmith
 langgraph
 requests
+
+langchain-pinecone

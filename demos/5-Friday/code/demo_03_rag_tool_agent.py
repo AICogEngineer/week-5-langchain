@@ -26,19 +26,23 @@ Prerequisites (Week 3-4):
 """
 
 import os
+import time
 from dotenv import load_dotenv
 from typing import List
 
 # Load environment variables
 load_dotenv()
 
-from langchain import init_chat_model
 from langchain_core.tools import tool
 from langchain.agents import create_agent
 from langgraph.checkpoint.memory import InMemorySaver
+from langchain_openai import OpenAIEmbeddings
+from langchain_pinecone import PineconeVectorStore
+from langchain_core.documents import Document
+from pinecone import Pinecone, ServerlessSpec
 
 # ============================================================================
-# PART 1: Setting Up a Simple Knowledge Base
+# PART 1: Setting Up the Knowledge Base (Pinecone)
 # ============================================================================
 
 print("=" * 70)
@@ -47,16 +51,16 @@ print("=" * 70)
 
 print("""
 First, we need a knowledge base to search.
-In production, this would be ChromaDB, Pinecone, etc.
-For this demo, we'll use a simple in-memory simulation.
+We will use Pinecone as our vector database.
 """)
 
-# Simulated vector store with company documentation
-# In production, you'd use:
-# from langchain_community.vectorstores import Chroma
-# from langchain_openai import OpenAIEmbeddings
+# Check for API Keys
+if not os.getenv("PINECONE_API_KEY"):
+    raise ValueError("PINECONE_API_KEY environment variable is not set")
 
-KNOWLEDGE_BASE = {
+# 1. Prepare Data
+# ------------------------------------------------------------------
+raw_data = {
     "refund_policy": {
         "content": """REFUND POLICY: Customers can request a full refund within 30 days 
         of purchase for any unused product. Used products may be eligible for partial 
@@ -96,32 +100,62 @@ KNOWLEDGE_BASE = {
     }
 }
 
-def simulate_search(query: str, k: int = 2) -> List[dict]:
-    """Simulate vector similarity search."""
-    # In production, this would be vectorstore.similarity_search()
-    query_lower = query.lower()
-    results = []
-    
-    for doc_id, doc in KNOWLEDGE_BASE.items():
-        content_lower = doc["content"].lower()
-        # Simple keyword matching (production would use embeddings)
-        relevance_score = sum(1 for word in query_lower.split() if word in content_lower)
-        if relevance_score > 0:
-            results.append({
-                "content": doc["content"],
-                "metadata": doc["metadata"],
-                "score": relevance_score
-            })
-    
-    # Sort by relevance and return top k
-    results.sort(key=lambda x: x["score"], reverse=True)
-    return results[:k]
+documents = []
+for key, data in raw_data.items():
+    documents.append(
+        Document(
+            page_content=data["content"].replace("    ", "").strip(),
+            metadata=data["metadata"]
+        )
+    )
 
-print("\n[Step 1] Testing simulated knowledge base...")
-test_results = simulate_search("refund policy", k=2)
+print(f"Created {len(documents)} documents for indexing.")
+
+# 2. Initialize Embeddings and Vector Store
+# ------------------------------------------------------------------
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+index_name = os.getenv("PINECONE_INDEX_NAME", "langchain-demo-index")
+
+print(f"Connecting to Pinecone index: {index_name}")
+
+# Initialize Pinecone client to check/create index
+pc = Pinecone(api_key=os.environ["PINECONE_API_KEY"])
+
+# Check if index exists
+existing_indexes = pc.list_indexes().names()
+
+if index_name not in existing_indexes:
+    print(f"Index '{index_name}' not found. Creating it...")
+    try:
+        pc.create_index(
+            name=index_name,
+            dimension=1536,  # text-embedding-3-small dimension
+            metric="cosine",
+            spec=ServerlessSpec(
+                cloud="aws",
+                region="us-east-1"
+            )
+        )
+        print("Waiting for index to be ready...")
+        while not pc.describe_index(index_name).status["ready"]:
+            time.sleep(1)
+        print("Index created and ready!")
+    except Exception as e:
+        print(f"Error creating index: {e}")
+        print("Attempting to proceed (index might be creating)...")
+
+# Connect to the index
+vectorstore = PineconeVectorStore.from_documents(
+    documents=documents,
+    embedding=embeddings,
+    index_name=index_name
+)
+
+print("\n[Step 1] Testing vector store retrieval...")
+test_results = vectorstore.similarity_search("refund policy", k=2)
 print(f"  Found {len(test_results)} relevant documents for 'refund policy'")
 for i, doc in enumerate(test_results):
-    print(f"    Doc {i+1}: {doc['content'][:60]}...")
+    print(f"    Doc {i+1}: {doc.page_content[:60]}...")
 
 # ============================================================================
 # PART 2: Creating RAG Tool
@@ -150,7 +184,8 @@ def search_knowledge_base(query: str) -> str:
     
     Returns relevant documentation to answer customer questions.
     """
-    results = simulate_search(query, k=2)
+    # Use the global vectorstore
+    results = vectorstore.similarity_search(query, k=2)
     
     if not results:
         return "No relevant information found in the knowledge base for this query."
@@ -158,13 +193,16 @@ def search_knowledge_base(query: str) -> str:
     # Format results for the agent
     formatted = []
     for i, doc in enumerate(results, 1):
-        formatted.append(f"Document {i}:\n{doc['content']}")
+        formatted.append(f"Document {i}:\n{doc.page_content}")
     
     return "\n\n---\n\n".join(formatted)
 
 print("\n[Step 2] Testing RAG tool directly...")
-result = search_knowledge_base.invoke({"query": "how do I get a refund?"})
-print(f"  Tool output:\n    {result[:200]}...")
+try:
+    result = search_knowledge_base.invoke({"query": "how do I get a refund?"})
+    print(f"  Tool output:\n    {result[:200]}...")
+except Exception as e:
+    print(f"  Error testing tool: {e}")
 
 # ============================================================================
 # PART 3: Building the RAG Agent
@@ -217,12 +255,15 @@ test_questions = [
 
 for question in test_questions:
     print(f"\n  Customer: {question}")
-    result = rag_agent.invoke(
-        {"messages": [{"role": "user", "content": question}]},
-        config
-    )
-    response = result['messages'][-1].content
-    print(f"  Agent: {response[:200]}...")
+    try:
+        result = rag_agent.invoke(
+            {"messages": [{"role": "user", "content": question}]},
+            config
+        )
+        response = result['messages'][-1].content
+        print(f"  Agent: {response[:200]}...")
+    except Exception as e:
+        print(f"  Error invoking agent: {e}")
 
 # ============================================================================
 # PART 5: 2-Step RAG vs Agentic RAG
@@ -265,13 +306,16 @@ print("\n[Step 5] Agent deciding when NOT to search...")
 # Question that doesn't need knowledge base
 general_question = "Hello! How are you today?"
 print(f"\n  Customer: {general_question}")
-result = rag_agent.invoke(
-    {"messages": [{"role": "user", "content": general_question}]},
-    {"configurable": {"thread_id": "agentic_demo"}}
-)
-response = result['messages'][-1].content
-print(f"  Agent: {response}")
-print("  (Notice: Agent didn't use the search tool for this greeting)")
+try:
+    result = rag_agent.invoke(
+        {"messages": [{"role": "user", "content": general_question}]},
+        {"configurable": {"thread_id": "agentic_demo"}}
+    )
+    response = result['messages'][-1].content
+    print(f"  Agent: {response}")
+    print("  (Notice: Agent didn't use the search tool for this greeting)")
+except Exception as e:
+    print(f"  Error invoking agent: {e}")
 
 # ============================================================================
 # PART 6: Enhanced RAG Tool with Metadata
@@ -289,21 +333,27 @@ def search_with_sources(query: str) -> str:
     Use for any customer question about company policies, products, or services.
     Results include source document information for citation.
     """
-    results = simulate_search(query, k=2)
+    # Use the global vectorstore
+    results = vectorstore.similarity_search(query, k=2)
     
     if not results:
         return "No relevant information found."
     
     formatted = []
     for i, doc in enumerate(results, 1):
-        source_info = f"[Source: {doc['metadata']['category'].upper()}, Updated: {doc['metadata']['last_updated']}]"
-        formatted.append(f"{doc['content']}\n{source_info}")
+        # Access metadata from the Document object
+        metadata = doc.metadata
+        source_info = f"[Source: {metadata.get('category', 'unknown').upper()}, Updated: {metadata.get('last_updated', 'unknown')}]"
+        formatted.append(f"{doc.page_content}\n{source_info}")
     
     return "\n\n---\n\n".join(formatted)
 
 print("\n[Step 6] Testing RAG with source citations...")
-result = search_with_sources.invoke({"query": "warranty information"})
-print(f"  {result[:300]}...")
+try:
+    result = search_with_sources.invoke({"query": "warranty information"})
+    print(f"  {result[:300]}...")
+except Exception as e:
+    print(f"  Error testing tool: {e}")
 
 # ============================================================================
 # PART 7: Production Considerations
@@ -318,9 +368,9 @@ print("""
 │ PRODUCTION RAG AGENT CHECKLIST                                      │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
-│ ☐ USE REAL VECTOR STORE                                             │
-│   Replace simulation with ChromaDB, Pinecone, etc.                  │
-│   vectorstore = Chroma(persist_directory="./db", ...)               │
+│ ☐ REAL VECTOR STORE                                                 │
+│   (Implemented!) Pinecone, ChromaDB, etc.                           │
+│   Ensure proper indexing pipelines.                                 │
 │                                                                     │
 │ ☐ QUALITY EMBEDDINGS                                                │
 │   Use text-embedding-3-small or better                              │
@@ -380,23 +430,24 @@ print("=" * 70)
 
 print("""
 Show trainees:
-1. How the agent decides to use the RAG tool
-2. The difference when agent doesn't need to search
-3. How to format results for best agent understanding
+1. The Pinecone dashboard (if available) to show indexed vectors.
+2. How the agent decides to use the RAG tool.
+3. The difference when agent doesn't need to search.
+4. How to format results for best agent understanding.
 
 Live Demo Tips:
-- Show traces in LangSmith to see tool calls
-- Try questions that need multiple docs
-- Show what happens with irrelevant queries
+- Ensure PINECONE_API_KEY and PINECONE_INDEX_NAME are set.
+- Show traces in LangSmith to see the retrieval steps.
+- Try questions that need multiple docs.
 
 Discussion Questions:
-- "How would you improve retrieval quality?"
-- "When would you use 2-step vs agentic RAG?"
-- "How do you handle when the knowledge base doesn't have the answer?"
+- "Why use Pinecone (serverless) vs local ChromaDB?"
+- "How do you handle index updates in a live system?"
+- "What security implications are there with external vector stores?"
 
 Pair Programming Exercise:
-Build a RAG agent for a different domain (e.g., HR policies, 
-technical documentation, product catalog) using real ChromaDB.
+Build a pipeline that continuously ingests new PDFs into Pinecone 
+and have the agent answer questions about them.
 """)
 
 print("=" * 70)

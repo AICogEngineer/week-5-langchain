@@ -104,7 +104,7 @@ A decision framework:
 LangChain provides a unified interface across all model providers:
 
 ```python
-from langchain import init_chat_model
+from langchain.chat_models import init_chat_model
 
 # All models have the same interface
 openai_model = init_chat_model("openai:gpt-4o-mini")

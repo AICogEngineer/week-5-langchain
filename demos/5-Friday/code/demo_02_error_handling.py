@@ -88,6 +88,15 @@ def bad_api_call(endpoint: str) -> str:
     return response.text
 
 # GOOD: Tool with error handling
+print("\n[Step 0] Visualizing Unhandled Errors (Check LangSmith!)")
+print("  Calling 'bad_api_call' which will raise an exception...")
+try:
+    # This URL will fail
+    bad_api_call.invoke({"endpoint": "https://this-domain-does-not-exist-12345.com"})
+except Exception as e:
+    print(f"  ✓ Expected error caught in script: {type(e).__name__}")
+    print("    (See the RED trace in LangSmith for 'bad_api_call')")
+
 @tool
 def good_api_call(endpoint: str) -> str:
     """
@@ -118,7 +127,8 @@ def flaky_database_query(query: str) -> str:
     """
     # Simulate flaky behavior (30% failure rate)
     if random.random() < 0.3:
-        return "ERROR: Database connection failed. Please retry."
+        # NOW RAISING AN EXCEPTION (so it shows RED in LangSmith)
+        raise ConnectionError("Database connection failed. Please retry.")
     
     # Simulate processing time
     time.sleep(0.2)
@@ -127,9 +137,13 @@ def flaky_database_query(query: str) -> str:
 
 print("\n[Step 1] Testing flaky tool...")
 for i in range(5):
-    result = flaky_database_query.invoke({"query": "SELECT * FROM users"})
-    status = "✓" if "successfully" in result else "✗"
-    print(f"  Attempt {i+1}: {status} {result[:50]}...")
+    try:
+        result = flaky_database_query.invoke({"query": "SELECT * FROM users"})
+        status = "✓"
+        print(f"  Attempt {i+1}: {status} {result[:50]}...")
+    except Exception as e:
+        status = "✗"
+        print(f"  Attempt {i+1}: {status} ERROR: {e}")
 
 # ============================================================================
 # PART 3: Retry Logic with Backoff
@@ -154,18 +168,17 @@ def retry_with_backoff(
     last_error = None
     
     for attempt in range(max_retries):
-        result = func.invoke(args)
-        
-        # Check if result indicates error
-        if not result.startswith("ERROR:"):
-            return result
-        
-        last_error = result
-        
-        if attempt < max_retries - 1:
-            delay = base_delay * (2 ** attempt)  # 1s, 2s, 4s
-            print(f"    Retry {attempt + 1}/{max_retries} in {delay}s...")
-            time.sleep(delay)
+        try:
+            # Try to invoke the function
+            return func.invoke(args)
+        except Exception as e:
+            # Catch the exception (shows as failure in trace, but handled here)
+            last_error = str(e)
+            
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)  # 1s, 2s, 4s
+                print(f"    Retry {attempt + 1}/{max_retries} in {delay}s... (Error: {last_error})")
+                time.sleep(delay)
     
     return f"FAILED after {max_retries} attempts. Last error: {last_error}"
 

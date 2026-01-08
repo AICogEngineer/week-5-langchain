@@ -29,7 +29,7 @@ from enum import Enum
 # Load environment variables
 load_dotenv()
 
-from langchain import init_chat_model
+from langchain.chat_models import init_chat_model
 from langchain_core.tools import tool
 from langchain.agents import create_agent
 from langgraph.checkpoint.memory import InMemorySaver
@@ -185,12 +185,11 @@ You can combine structured output with agents.
 The agent can use tools, then return a structured response.
 """)
 
-class TaskResult(BaseModel):
+class Product(BaseModel):
     """Structured task completion result."""
-    task_completed: bool = Field(description="Whether the task was completed")
-    result_summary: str = Field(description="Summary of what was accomplished")
-    data_gathered: List[str] = Field(description="Key data points collected")
-    next_steps: List[str] = Field(description="Recommended follow-up actions")
+    product_name: str = Field(description="name of product")
+    in_stock: int = Field(description="Amount in Stock")
+    on_order: int = Field(description="Product on order")
 
 @tool
 def lookup_inventory(product_name: str) -> str:
@@ -210,6 +209,7 @@ structured_agent = create_agent(
     Use the lookup_inventory tool to find product information.
     Provide structured responses about inventory status.""",
     checkpointer=InMemorySaver(),
+    response_format=Product,
     name="structured_inventory_agent"
 )
 
