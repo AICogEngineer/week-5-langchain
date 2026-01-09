@@ -27,7 +27,12 @@ from langgraph.checkpoint.memory import InMemorySaver
 load_dotenv()
 
 
-# === Simple demo tools ===
+# === Tools that demonstrate middleware behavior ===
+
+# Failure counter for demonstrating retries
+_failure_count = {"unreliable_search": 0}
+
+
 @tool
 def search(query: str) -> str:
     """Search for information about a topic."""
@@ -44,127 +49,122 @@ def calculate(expression: str) -> str:
         return f"Error: {e}"
 
 
-# === 1. Model Call Limit Middleware ===
-# Prevents runaway agents from making too many LLM API calls
+@tool
+def unreliable_search(query: str) -> str:
+    """
+    A simulated unreliable search that fails twice then succeeds.
+    Demonstrates tool retry middleware.
+    """
+    _failure_count["unreliable_search"] += 1
+    if _failure_count["unreliable_search"] <= 2:
+        raise Exception(f"Search service timeout (attempt {_failure_count['unreliable_search']})")
+    return f"Search results for '{query}': Found 5 relevant articles."
+
+
+# === 1. Model Call Limit - Demonstrating the limit being hit ===
 def demo_model_call_limit():
-    """Limit how many times the model can be called per run/thread."""
-    print("\n🔒 Model Call Limit Middleware")
-    print("-" * 40)
+    """
+    Demonstrate model call limits by setting a very low limit.
+    The agent will be stopped after 2 model calls.
+    """
+    print("\n" + "=" * 60)
+    print("Example 1: Model Call Limit Middleware")
+    print("=" * 60)
 
     agent = create_agent(
         name="limited_agent",
         model="gpt-4o-mini",
-        checkpointer=InMemorySaver(),  # Required for thread_limit
+        checkpointer=InMemorySaver(),
         tools=[search, calculate],
         middleware=[
             ModelCallLimitMiddleware(
-                thread_limit=10,  # Max calls across entire conversation
-                run_limit=5,  # Max calls per single invocation
-                exit_behavior="end",  # Options: "end", "error"
+                run_limit=2,  # Very low limit to demonstrate
+                exit_behavior="end",  # Gracefully end when limit hit
             ),
         ],
     )
 
+    # This complex request would normally require multiple model calls
     response = agent.invoke(
-        {"messages": [{"role": "user", "content": "What is 2 + 2?"}]},
-        config={"configurable": {"thread_id": "demo-1"}},
+        {"messages": [{"role": "user", "content": "Search for Python, then calculate 10+5, then search for JavaScript"}]},
+        config={"configurable": {"thread_id": "demo-limit"}},
     )
     print(f"Response: {response['messages'][-1].content}")
 
 
-# === 2. Tool Call Limit Middleware ===
-# Prevents excessive calls to expensive tools or APIs
+# === 2. Tool Call Limit - Demonstrating per-tool limits ===
 def demo_tool_call_limit():
-    """Limit how many times specific tools can be called."""
-    print("\n🔧 Tool Call Limit Middleware")
-    print("-" * 40)
+    """
+    Demonstrate tool-specific limits.
+    Search is limited to 1 call, calculate is unlimited.
+    """
+    print("\n" + "=" * 60)
+    print("Example 2: Tool Call Limit Middleware")
+    print("=" * 60)
 
     agent = create_agent(
         name="tool_limited_agent",
         model="gpt-4o-mini",
         tools=[search, calculate],
         middleware=[
-            # Global limit for all tools
-            ToolCallLimitMiddleware(thread_limit=20, run_limit=10),
-            # Specific limit for search (expensive external API)
             ToolCallLimitMiddleware(
                 tool_name="search",
-                thread_limit=5,
-                run_limit=3,
-                exit_behavior="continue",  # Block with error, agent continues
+                run_limit=1,  # Only allow 1 search
+                exit_behavior="continue",  # Return error, agent continues
             ),
         ],
     )
 
+    # Request multiple searches - second one will be blocked
     response = agent.invoke(
-        {"messages": [{"role": "user", "content": "Calculate 10 * 5"}]}
+        {"messages": [{"role": "user", "content": "Search for Python tutorials, then search for JavaScript tutorials"}]}
     )
     print(f"Response: {response['messages'][-1].content}")
 
 
-# === 3. Model Retry Middleware ===
-# Automatic retries with exponential backoff for transient failures
-def demo_model_retry():
-    """Retry model calls on transient failures."""
-    print("\n🔄 Model Retry Middleware")
-    print("-" * 40)
-
-    agent = create_agent(
-        name="resilient_agent",
-        model="gpt-4o-mini",
-        tools=[search],
-        middleware=[
-            ModelRetryMiddleware(
-                max_retries=3,  # Retry up to 3 times
-                backoff_factor=2.0,  # Exponential backoff multiplier
-                initial_delay=1.0,  # Start with 1 second delay
-                max_delay=60.0,  # Cap delay at 60 seconds
-                jitter=True,  # Add randomness to prevent thundering herd
-                on_failure="continue",  # Return error message vs "error" to raise
-            ),
-        ],
-    )
-
-    response = agent.invoke(
-        {"messages": [{"role": "user", "content": "Hello!"}]}
-    )
-    print(f"Response: {response['messages'][-1].content}")
-
-
-# === 4. Tool Retry Middleware ===
-# Retry tools on transient failures (network issues, API rate limits)
+# === 3. Tool Retry - Demonstrating automatic retries ===
 def demo_tool_retry():
-    """Retry tool calls on transient failures."""
-    print("\n🛠️ Tool Retry Middleware")
-    print("-" * 40)
+    """
+    Demonstrate automatic retries with a flaky tool.
+    The unreliable_search tool fails twice then succeeds.
+    """
+    print("\n" + "=" * 60)
+    print("Example 3: Tool Retry Middleware")
+    print("=" * 60)
+    
+    # Reset failure counter
+    _failure_count["unreliable_search"] = 0
 
     agent = create_agent(
-        name="tool_retry_agent",
+        name="retry_agent",
         model="gpt-4o-mini",
-        tools=[search, calculate],
+        tools=[unreliable_search],
         middleware=[
             ToolRetryMiddleware(
                 max_retries=3,
-                backoff_factor=2.0,
-                initial_delay=1.0,
-                tools=["search"],  # Only retry search tool
-                on_failure="return_message",  # Return error to LLM
+                backoff_factor=1.5,
+                initial_delay=0.5,
+                tools=["unreliable_search"],
+                on_failure="return_message",
             ),
         ],
     )
 
     response = agent.invoke(
-        {"messages": [{"role": "user", "content": "Search for Python tutorials"}]}
+        {"messages": [{"role": "user", "content": "Search for LangChain documentation"}]}
     )
     print(f"Response: {response['messages'][-1].content}")
 
 
-# === 5. Combined Middleware Stack ===
-# Production-ready agent with multiple middleware layers
+# === 4. Combined Middleware Stack ===
 def demo_combined_middleware():
-    """Combine multiple middleware for production-grade agents."""
-    print("\n🏭 Combined Middleware Stack")
-    print("-" * 40)
+    """
+    Production-ready configuration with multiple middleware layers.
+    Shows how middleware can be stacked for robust agent behavior.
+    """
+    print("\n" + "=" * 60)
+    print("Example 4: Combined Middleware Stack")
+    print("=" * 60)
 
     agent = create_agent(
         name="production_agent",
@@ -172,12 +172,12 @@ def demo_combined_middleware():
         checkpointer=InMemorySaver(),
         tools=[search, calculate],
         middleware=[
-            # Layer 1: Retry transient failures
+            # Layer 1: Retry transient failures first
             ModelRetryMiddleware(max_retries=3, on_failure="continue"),
             ToolRetryMiddleware(max_retries=2, on_failure="return_message"),
-            # Layer 2: Enforce limits
-            ModelCallLimitMiddleware(run_limit=10, exit_behavior="end"),
-            ToolCallLimitMiddleware(tool_name="search", run_limit=5),
+            # Layer 2: Then enforce limits (after retries)
+            ModelCallLimitMiddleware(run_limit=5, exit_behavior="end"),
+            ToolCallLimitMiddleware(tool_name="search", run_limit=3),
         ],
     )
 
@@ -190,16 +190,15 @@ def demo_combined_middleware():
 
 # === Run All Demos ===
 if __name__ == "__main__":
-    print("=" * 50)
-    print("🚀 LangChain v1.0 Built-in Middleware Demo")
-    print("=" * 50)
+    print("=" * 60)
+    print("LangChain v1.0 Built-in Middleware Demo")
+    print("=" * 60)
 
     demo_model_call_limit()
     demo_tool_call_limit()
-    demo_model_retry()
     demo_tool_retry()
     demo_combined_middleware()
 
-    print("\n" + "=" * 50)
-    print("✅ All middleware demos complete!")
-    print("=" * 50)
+    print("\n" + "=" * 60)
+    print("All middleware demos complete!")
+    print("=" * 60)

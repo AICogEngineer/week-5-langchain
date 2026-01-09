@@ -1,0 +1,9 @@
+{
+    "dependencies": [
+        "."
+    ],
+    "graphs": {
+        "hitl_agent": "./agent.py:agent"
+    },
+    "env": ".env"
+}
