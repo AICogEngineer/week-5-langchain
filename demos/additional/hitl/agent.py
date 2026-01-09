@@ -93,58 +93,5 @@ Always explain what you're about to do before using dangerous tools.""",
             },
             description_prefix="Action requires human approval",
         ),
-    ]
+    ],
 )
-
-
-# === Streaming Helper Function ===
-def stream_agent(user_message: str, thread_id: str = "default"):
-    """
-    Stream agent responses with HITL interrupt handling.
-    
-    This follows the streaming pattern from:
-    https://docs.langchain.com/oss/python/langchain/human-in-the-loop#streaming-with-human-in-the-loop
-    """
-    
-    config = {"configurable": {"thread_id": thread_id}}
-    
-    # Stream agent progress and LLM tokens until interrupt
-    for mode, chunk in agent.stream(
-        {"messages": [{"role": "user", "content": user_message}]},
-        config=config,
-        stream_mode=["updates", "messages"],
-    ):
-        if mode == "messages":
-            # LLM token
-            token, metadata = chunk
-            if token.content:
-                print(token.content, end="", flush=True)
-        elif mode == "updates":
-            # Check for interrupt
-            if "__interrupt__" in chunk:
-                interrupt = chunk["__interrupt__"]
-                print(f"\n\nInterrupt: {interrupt}")
-                return interrupt, config
-    
-    return None, config
-
-
-def resume_with_decision(decision: dict, config: dict):
-    """
-    Resume streaming after human decision.
-    
-    Decision types:
-    - {"type": "approve"}
-    - {"type": "edit", "edited_action": {"name": "tool", "args": {...}}}
-    - {"type": "reject", "message": "reason"}
-    """
-    
-    for mode, chunk in agent.stream(
-        Command(resume={"decisions": [decision]}),
-        config=config,
-        stream_mode=["updates", "messages"],
-    ):
-        if mode == "messages":
-            token, metadata = chunk
-            if token.content:
-                print(token.content, end="", flush=True)
