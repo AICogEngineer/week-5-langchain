@@ -83,10 +83,7 @@ Always explain what you're about to do before using dangerous tools.""",
                 "delete_file": True,
                 "execute_sql": True,
                 # Email - allow editing before send
-                "send_email": {
-                    "allowed_decisions": ["approve", "edit", "reject"],
-                    "description": "Review email before sending",
-                },
+                "send_email": True,
                 # Safe operations - no approval needed
                 "search_web": False,
                 "get_current_time": False,
